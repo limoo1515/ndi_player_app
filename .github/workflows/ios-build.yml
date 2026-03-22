@@ -1,0 +1,44 @@
+name: "iOS Build Cloud"
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: "Checkout Code"
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: "Installer Flutter"
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0' # ou 'stable'
+          channel: 'stable'
+
+      - name: "Installer les dépendances et Pods"
+        run: |
+          flutter config --enable-ios
+          flutter pub get
+          cd ios && pod install
+
+      - name: "Générer l'IPA (Non signé pour test)"
+        run: |
+          gem install xcodeproj
+          cd ios && ruby configure_xcode.rb && cd ..
+          flutter build ios --no-codesign
+          
+          cd build/ios/iphoneos
+          mkdir Payload
+          cp -r Runner.app Payload/
+          zip -r NDI_Player.ipa Payload
+
+      - name: "Exporter l'Application iOS (.ipa)"
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-app
+          path: build/ios/iphoneos/NDI_Player.ipa
