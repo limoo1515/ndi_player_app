@@ -17,23 +17,26 @@ jobs:
       - name: "Installer Flutter"
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.0' # ou 'stable'
+          flutter-version: '3.19.0'
           channel: 'stable'
 
-      - name: "Installer les dépendances et Pods"
+      - name: "Installer les dépendances Flutter"
         run: |
           flutter config --enable-ios
+          flutter create . --platforms=ios
           flutter pub get
-          cd ios && pod install
 
-      - name: "Générer l'IPA (Non signé pour test)"
+      - name: "Configurer Xcode pour l'SDK NDI"
         run: |
-          gem install xcodeproj
-          cd ios && ruby configure_xcode.rb && cd ..
-          flutter build ios --no-codesign
-          
+          sudo gem install xcodeproj
+          cd ios
+          ruby configure_xcode.rb
+
+      - name: "Générer l'IPA (Non signé)"
+        run: |
+          flutter build ios --no-codesign --verbose
           cd build/ios/iphoneos
-          mkdir Payload
+          mkdir -p Payload
           cp -r Runner.app Payload/
           zip -r NDI_Player.ipa Payload
 
