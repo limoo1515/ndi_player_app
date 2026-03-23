@@ -3,9 +3,6 @@
 
 // Import NDI Core
 #include "Processing.NDI.Lib.h"
-#include "Processing.NDI.Find.h"
-#include "Processing.NDI.Recv.h"
-#include "Processing.NDI.Video.h"
-#include "Processing.NDI.Audio.h"
+#include "Processing.NDI.structs.h"
 
 #endif /* NDI_Bridging_Header_h */

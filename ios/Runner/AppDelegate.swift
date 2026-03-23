@@ -34,7 +34,7 @@ import Flutter
         let factory = NDIViewFactory(messenger: controller.binaryMessenger)
         registrar?.register(factory, withId: "ndi-view")
         
-        GeneratedPluginRegistrant.register(with: self)
+        // GeneratedPluginRegistrant.register(with: self)
         return super.application(application, didFinishLaunchingWithOptions: launchOptions)
     }
 }

@@ -13,9 +13,6 @@ class NDIManager: NSObject {
     private var recvInstance: NDIlib_recv_instance_t?
     private var connectedSource: String?
     
-    // UI/Metal rendering support
-    private var renderer: NDIFrameRenderer?
-    
     override init() {
         super.init()
         // Initialize NDI library
@@ -25,7 +22,7 @@ class NDIManager: NSObject {
         }
         
         // Create finder instance
-        let findCreate = NDIlib_find_create_t(show_local_sources: true, groups: nil, extra_ips: nil)
+        let findCreate = NDIlib_find_create_t(show_local_sources: true, p_groups: nil, p_extra_ips: nil)
         findInstance = NDIlib_find_create_v2(&findCreate)
     }
     
