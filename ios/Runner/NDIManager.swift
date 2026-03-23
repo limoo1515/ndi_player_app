@@ -22,7 +22,7 @@ class NDIManager: NSObject {
         }
         
         // Create finder instance
-        let findCreate = NDIlib_find_create_t(show_local_sources: true, p_groups: nil, p_extra_ips: nil)
+        var findCreate = NDIlib_find_create_t(show_local_sources: true, p_groups: nil, p_extra_ips: nil)
         findInstance = NDIlib_find_create_v2(&findCreate)
     }
     
