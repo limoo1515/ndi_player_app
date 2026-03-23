@@ -8,6 +8,10 @@ import io.flutter.plugin.common.StandardMessageCodec
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "com.antigravity/ndi"
 
+    init {
+        System.loadLibrary("mimo_ndi_native")
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
@@ -39,13 +43,7 @@ class MainActivity: FlutterActivity() {
         }
     }
 
-    // These would call the JNI bridge to the NDI SDK
-    private fun getNativeSources(): List<String> {
-        // Mocking for now, but LibNDI.getSources() would go here
-        return listOf("Scan result: No official SDK JNI linked yet")
-    }
-
-    private fun connectToNativeSource(name: String) {
-        // LibNDI.connect(name)
-    }
+    // These call the C++ JNI bridge (native-lib.cpp)
+    private external fun getNativeSources(): List<String>
+    private external fun connectToNativeSource(name: String)
 }

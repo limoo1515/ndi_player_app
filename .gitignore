@@ -1,2 +1,5 @@
 *.tmp
 *.7z
+*.a
+*.zip
+ios/NDISDK/lib/

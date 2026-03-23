@@ -1,0 +1,78 @@
+name: "MIMO_NDI Android Cloud Build"
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout Code"
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: "Installer Java"
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: "Installer Flutter"
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
+
+      - name: "Installer NDK"
+        run: |
+          sudo ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --install "ndk;25.1.8937393"
+
+      - name: "Récupérer la lib NDI Android depuis la Release"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 1. Créer le dossier de destination
+          mkdir -p android/app/src/main/jniLibs/arm64-v8a
+          
+          # 2. Télécharger le fichier .so depuis ta release v1.0.0-sdk
+          echo "Téléchargement de libndi.so depuis ta Release GitHub..."
+          gh release download v1.0.0-sdk --repo ${{ github.repository }} --pattern 'libndi.so'
+          
+          # 3. Déplacer la lib au bon endroit pour le build
+          mv libndi.so android/app/src/main/jniLibs/arm64-v8a/
+          
+          echo "Lib prête pour le build Android !"
+          ls -R android/app/src/main/jniLibs/
+
+      - name: "Installer les Headers NDI"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Android réutilise les headers via CMake (path: ../../../../../ios/NDISDK/include)
+          mkdir -p ios/NDISDK/include
+          echo "Téléchargement des Headers..."
+          gh release download v1.0.0-sdk --repo ${{ github.repository }} --pattern 'include.zip'
+          unzip -o include.zip -d ios/NDISDK/include/
+          ls -R ios/NDISDK/include/
+
+      - name: "Installer les dépendances Flutter"
+        run: flutter pub get
+
+      - name: "Fix Gradle Permissions"
+        run: chmod +x android/gradlew
+
+      - name: "Générer l'APK (Release)"
+        run: |
+          # On indique le chemin du NDK pour que Flutter le trouve sans erreur
+          export ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/25.1.8937393
+          # --no-shrink est recommandé si le stripping réduit trop la taille ou casse le SDK
+          flutter build apk --release --no-shrink --verbose
+
+      - name: "Exporter l'APK (.apk)"
+        uses: actions/upload-artifact@v4
+        with:
+          name: mimo-ndi-android-apk
+          path: build/app/outputs/flutter-apk/app-release.apk

@@ -2,7 +2,8 @@ require 'xcodeproj'
 
 # This script helps configure the Xcode project for NDI SDK integration.
 project_path = 'Runner.xcodeproj'
-project = Xcodeproj::Project.open(project_path)
+begin
+  project = Xcodeproj::Project.open(project_path)
 
 target = project.targets.find { |t| t.name == 'Runner' }
 
@@ -42,3 +43,7 @@ target.frameworks_build_phase.add_file_reference(ndi_file_ref)
 
 project.save
 puts "✅ Xcode project configured for NDI SDK integration."
+rescue => e
+  puts "❌ ERROR: Failed to configure Xcode project: #{e.message}"
+  exit 1
+end
