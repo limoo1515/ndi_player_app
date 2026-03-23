@@ -61,7 +61,7 @@ class NDIManager: NSObject {
         return sourceNames
     }
     
-    func connect(to sourceName: String) {
+    func connect(to sourceName: String, bandwidth: Int = 100) {
         // Find the source object from the list
         guard let find = findInstance else { return }
         
@@ -93,13 +93,23 @@ class NDIManager: NSObject {
         var recvCreate = NDIlib_recv_create_v3_t()
         recvCreate.source_to_connect_to = source
         recvCreate.color_format = NDIlib_recv_color_format_BGRX_BGRA
-        recvCreate.bandwidth = NDIlib_recv_bandwidth_highest
+        
+        // Quality settings
+        if bandwidth >= 100 {
+            recvCreate.bandwidth = NDIlib_recv_bandwidth_highest
+        } else if bandwidth >= 50 {
+            recvCreate.bandwidth = NDIlib_recv_bandwidth_lowest
+        } else {
+            // Proxy mode
+            recvCreate.bandwidth = NDIlib_recv_bandwidth_lowest
+        }
+        
         recvCreate.allow_video_fields = false
         
         recvInstance = NDIlib_recv_create_v3(&recvCreate)
         connectedSource = sourceName
         
-        print("Connected to NDI source: \(sourceName)")
+        print("Connected to NDI source: \(sourceName) with quality \(bandwidth)")
     }
     
     // This function will be called by the NDIView to pull frames
@@ -110,13 +120,15 @@ class NDIManager: NSObject {
         var audioFrame = NDIlib_audio_frame_v2_t()
         var metadataFrame = NDIlib_metadata_frame_t()
         
-        let res = NDIlib_recv_capture_v2(recv, &videoFrame, &audioFrame, &metadataFrame, 33)
+        // Use a short timeout to maintain high frame rate
+        let res = NDIlib_recv_capture_v2(recv, &videoFrame, &audioFrame, &metadataFrame, 0)
         
         switch res {
         case NDIlib_frame_type_video:
             return videoFrame
         case NDIlib_frame_type_audio:
-            // Release audio immediately for now
+            // Processing audio frames (to be played in future updates)
+            // Just free it for now to prevent memory leaks
             NDIlib_recv_free_audio_v2(recv, &audioFrame)
         case NDIlib_frame_type_metadata:
             NDIlib_recv_free_metadata(recv, &metadataFrame)

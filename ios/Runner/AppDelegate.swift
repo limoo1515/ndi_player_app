@@ -19,7 +19,8 @@ import Flutter
             } else if call.method == "connectToSource" {
                 if let args = call.arguments as? [String: Any],
                    let name = args["name"] as? String {
-                    NDIManager.shared.connect(to: name)
+                    let bandwidth = args["bandwidth"] as? Int ?? 100
+                    NDIManager.shared.connect(to: name, bandwidth: bandwidth)
                     result(true)
                 } else {
                     result(FlutterError(code: "INVALID_ARG", message: "Source name missing", details: nil))

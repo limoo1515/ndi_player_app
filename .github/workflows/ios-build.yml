@@ -28,6 +28,9 @@ jobs:
           git checkout ios/Podfile
           git checkout ios/configure_xcode.rb
           flutter pub get
+          # Génération des icônes et de l'écran d'accueil
+          dart run flutter_launcher_icons:main || echo "Icon generation failed"
+          dart run flutter_native_splash:create || echo "Splash generation failed"
 
       - name: "Pré-installation CocoaPods"
         run: |
