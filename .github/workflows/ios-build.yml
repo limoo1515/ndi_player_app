@@ -30,8 +30,10 @@ jobs:
       - name: "Installer les dépendances Flutter"
         run: |
           flutter config --enable-ios
-          # On ne fait SURTOUT PAS 'git checkout ios' car cela écraserait ta photo et tes réglages audio !
           flutter pub get
+          
+          # Générer le projet Xcode manquant (Runner.xcodeproj)
+          flutter create --platforms=ios . || true
           
           # Tentative de génération d'icônes et splash (silencieux si ça échoue)
           dart run flutter_launcher_icons:main || echo "Icon generation failed, using defaults"
