@@ -327,14 +327,6 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
   @override
   void initState() {
     super.initState();
-    _connect();
-  }
-
-  Future<void> _connect() async {
-    await _channel.invokeMethod('connectToSource', {
-      'name': widget.sourceName,
-      'bandwidth': _quality == "Highest" ? 100 : (_quality == "Medium" ? 50 : 0),
-    });
   }
 
   @override
@@ -402,7 +394,6 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
       onTap: () {
         setState(() => _quality = val);
         Navigator.pop(context);
-        _connect();
       },
     );
   }
@@ -419,7 +410,11 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
               // 16:9 → en portrait, le flux occupera toute la largeur
               // avec des bandes noires en haut/bas (comportement correct)
               aspectRatio: 16 / 9,
-              child: const NdiNativeView(),
+              child: NdiNativeView(
+                key: ValueKey("${widget.sourceName}_$_quality"),
+                sourceName: widget.sourceName,
+                quality: _quality,
+              ),
             ),
           ),
 
@@ -847,7 +842,7 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
               children: [
                 // Vidéo ou placeholder
                 if (source != null)
-                  const Positioned.fill(child: NdiNativeView())
+                  Positioned.fill(child: NdiNativeView(sourceName: source))
                 else
                   Center(
                     child: Column(
@@ -916,15 +911,22 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
 // VUE NATIVE NDI (UIKitView iOS)
 // ─────────────────────────────────────────────
 class NdiNativeView extends StatelessWidget {
-  const NdiNativeView({super.key});
+  final String? sourceName;
+  final String? quality; // "Highest", "Medium", "Lowest"
+  
+  const NdiNativeView({super.key, this.sourceName, this.quality});
 
   @override
   Widget build(BuildContext context) {
     if (Platform.isIOS) {
-      return const UiKitView(
+      return UiKitView(
           viewType: 'ndi-view',
           layoutDirection: TextDirection.ltr,
-          creationParamsCodec: StandardMessageCodec());
+          creationParams: {
+            'name': sourceName,
+            'quality': quality ?? "Highest"
+          },
+          creationParamsCodec: const StandardMessageCodec());
     }
     return const Center(child: Text('Platform not supported'));
   }
