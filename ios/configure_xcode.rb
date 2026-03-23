@@ -26,8 +26,8 @@ files.each do |f|
   end
 end
 
-# 3. Add Native iOS Frameworks
-['VideoToolbox.framework', 'AudioToolbox.framework', 'CoreMedia.framework', 'CoreVideo.framework'].each do |framework|
+# 3. Add Native iOS Frameworks (AJOUT DE ACCELERATE POUR NDI)
+['VideoToolbox.framework', 'AudioToolbox.framework', 'CoreMedia.framework', 'CoreVideo.framework', 'Accelerate.framework'].each do |framework|
   path = "System/Library/Frameworks/#{framework}"
   file_ref = project.frameworks_group.find_file_by_path(framework) || project.frameworks_group.new_file(path, :developer_dir)
   target.frameworks_build_phase.add_file_reference(file_ref)
