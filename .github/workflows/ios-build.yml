@@ -20,11 +20,21 @@ jobs:
           flutter-version: '3.19.0'
           channel: 'stable'
 
-      - name: "Vérifier la présence du SDK (Local)"
+      - name: "Télécharger le SDK NDI depuis GitHub Release"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Vérification des fichiers locaux..."
-          ls -R ios/NDISDK/lib/
-          ls -R ios/NDISDK/include/ || echo "Dossier include non trouvé"
+          mkdir -p ios/NDISDK/lib
+          mkdir -p ios/NDISDK/include
+          
+          echo "Téléchargement de libndi_ios.zip..."
+          gh release download v1.0.0-sdk --repo ${{ github.repository }} --pattern 'libndi_ios.zip'
+          unzip -o libndi_ios.zip -d ios/NDISDK/lib/
+          ls -lh ios/NDISDK/lib/
+          
+          echo "Téléchargement des headers..."
+          gh release download v1.0.0-sdk --repo ${{ github.repository }} --pattern 'include.zip'
+          unzip -o include.zip -d ios/NDISDK/include/
 
 
       - name: "Installer les dépendances Flutter"
