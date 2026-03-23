@@ -1,4 +1,4 @@
-name: "iOS Build Cloud"
+name: "MIMO_NDI iOS Cloud Build"
 
 on:
   push:
@@ -12,13 +12,31 @@ jobs:
       - name: "Checkout Code"
         uses: actions/checkout@v4
         with:
-          lfs: true
+          lfs: false # On désactive LFS pour ne pas dépasser le quota
 
       - name: "Installer Flutter"
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.19.0'
           channel: 'stable'
+
+      - name: "Télécharger & Extraire l'Apple SDK NDI (Bypass LFS)"
+        run: |
+          mkdir -p ios/NDISDK/lib
+          mkdir -p /tmp/ndi_sdk
+          
+          echo "Téléchargement du SDK NDI pour iOS..."
+          # Lien direct vers le SDK NDI pour iOS
+          curl -L "http://ndi.link/NDISDK_iOS" -o /tmp/ndi_sdk/ndi_sdk.pkg
+          
+          echo "Expansion du paquet..."
+          pkgutil --expand-full /tmp/ndi_sdk/ndi_sdk.pkg /tmp/ndi_sdk/expanded
+          
+          # Extraction de la librairie libndi_ios.a vers le dossier de build
+          find /tmp/ndi_sdk/expanded -name "libndi_ios.a" -exec cp {} ios/NDISDK/lib/ \;
+          
+          echo "Vérification de la présence de libndi_ios.a :"
+          ls -lh ios/NDISDK/lib/libndi_ios.a
 
       - name: "Installer les dépendances Flutter"
         run: |
@@ -56,11 +74,11 @@ jobs:
           cd build/ios/iphoneos
           mkdir -p Payload
           cp -r Runner.app Payload/
-          zip -r NDI_Player.ipa Payload
+          zip -r MIMO_NDI.ipa Payload
 
       - name: "Exporter l'Application iOS (.ipa)"
         uses: actions/upload-artifact@v4
         with:
-          name: ios-build-app
-          path: build/ios/iphoneos/NDI_Player.ipa
+          name: mimo-ndi-build
+          path: build/ios/iphoneos/MIMO_NDI.ipa
 
