@@ -26,19 +26,32 @@ jobs:
           flutter create . --platforms=ios
           flutter pub get
 
-      - name: "Configurer Xcode pour l'SDK NDI"
+      - name: "Configurer Xcode pour l'SDK NDI via Ruby"
         run: |
           sudo gem install xcodeproj
           cd ios
           ruby configure_xcode.rb
 
+      - name: "Installer les CocoaPods"
+        run: |
+          cd ios
+          rm -rf Pods
+          rm -rf Podfile.lock
+          pod repo update
+          pod install --repo-update
+
       - name: "Générer l'IPA (Non signé)"
         run: |
-          flutter build ios --no-codesign --verbose
+          flutter clean
+          flutter pub get
+          flutter build ios --release --no-codesign --verbose
+          
+          # Préparation de l'archive
           cd build/ios/iphoneos
           mkdir -p Payload
           cp -r Runner.app Payload/
           zip -r NDI_Player.ipa Payload
+
 
       - name: "Exporter l'Application iOS (.ipa)"
         uses: actions/upload-artifact@v4
