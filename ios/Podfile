@@ -4,11 +4,7 @@ platform :ios, '13.0'
 # Flutter Google Analytics logic
 ENV['COCOAPODS_DISABLE_STATS'] = '1'
 
-project 'Runner', {
-  'Debug' => :debug,
-  'Release' => :release,
-  'Profile' => :profile,
-}
+project 'Runner'
 
 def flutter_root
   generated_flutter_build_config_file = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)

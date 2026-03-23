@@ -26,18 +26,20 @@ jobs:
           flutter create . --platforms=ios
           flutter pub get
 
+      - name: "Générer les fichiers de conf Flutter"
+        run: |
+          cd ios
+          pod install || echo "Premier pass pour générer les structures"
+
       - name: "Configurer Xcode pour l'SDK NDI via Ruby"
         run: |
           sudo gem install xcodeproj
           cd ios
           ruby configure_xcode.rb
 
-      - name: "Installer les CocoaPods"
+      - name: "Finaliser les CocoaPods"
         run: |
           cd ios
-          rm -rf Pods
-          rm -rf Podfile.lock
-          pod repo update
           pod install --repo-update
 
       - name: "Générer l'IPA (Non signé)"
@@ -51,6 +53,7 @@ jobs:
           mkdir -p Payload
           cp -r Runner.app Payload/
           zip -r NDI_Player.ipa Payload
+
 
 
       - name: "Exporter l'Application iOS (.ipa)"
