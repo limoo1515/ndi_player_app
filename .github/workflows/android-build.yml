@@ -12,7 +12,7 @@ jobs:
       - name: "Checkout Code"
         uses: actions/checkout@v4
         with:
-          lfs: false
+          lfs: true
 
       - name: "Installer Java"
         uses: actions/setup-java@v4
@@ -30,33 +30,12 @@ jobs:
         run: |
           sudo ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --install "ndk;25.1.8937393"
 
-      - name: "Récupérer la lib NDI Android depuis la Release"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: "Vérifier la présence du SDK (Local)"
         run: |
-          # 1. Créer le dossier de destination
-          mkdir -p android/app/src/main/jniLibs/arm64-v8a
-          
-          # 2. Télécharger le fichier .so depuis ta release v1.0.0-sdk
-          echo "Téléchargement de libndi.so depuis ta Release GitHub..."
-          gh release download v1.0.0-sdk --repo ${{ github.repository }} --pattern 'libndi.so'
-          
-          # 3. Déplacer la lib au bon endroit pour le build
-          mv libndi.so android/app/src/main/jniLibs/arm64-v8a/
-          
-          echo "Lib prête pour le build Android !"
-          ls -R android/app/src/main/jniLibs/
+          echo "Vérification des fichiers locaux Android NDI..."
+          ls -R android/app/src/main/jniLibs/ || echo "Dossier jniLibs non trouvé"
+          ls -R ios/NDISDK/include/ || echo "Dossier include non trouvé"
 
-      - name: "Installer les Headers NDI"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Android réutilise les headers via CMake (path: ../../../../../ios/NDISDK/include)
-          mkdir -p ios/NDISDK/include
-          echo "Téléchargement des Headers..."
-          gh release download v1.0.0-sdk --repo ${{ github.repository }} --pattern 'include.zip'
-          unzip -o include.zip -d ios/NDISDK/include/
-          ls -R ios/NDISDK/include/
 
       - name: "Installer les dépendances Flutter"
         run: flutter pub get

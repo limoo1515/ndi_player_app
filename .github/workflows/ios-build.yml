@@ -12,7 +12,7 @@ jobs:
       - name: "Checkout Code"
         uses: actions/checkout@v4
         with:
-          lfs: false
+          lfs: true
 
       - name: "Installer Flutter"
         uses: subosito/flutter-action@v2
@@ -20,24 +20,12 @@ jobs:
           flutter-version: '3.19.0'
           channel: 'stable'
 
-      - name: "Télécharger le SDK NDI iOS depuis ma Release"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: "Vérifier la présence du SDK (Local)"
         run: |
-          mkdir -p ios/NDISDK/lib
-          
-          echo "Téléchargement de libndi_ios.zip depuis GitHub Release..."
-          gh release download v1.0.0-sdk --repo ${{ github.repository }} --pattern 'libndi_ios.zip'
-          echo "Décompression de la librairie..."
-          unzip -o libndi_ios.zip -d ios/NDISDK/lib/
-          
-          echo "Téléchargement des Headers NDI..."
-          mkdir -p ios/NDISDK/include
-          gh release download v1.0.0-sdk --repo ${{ github.repository }} --pattern 'include.zip'
-          unzip -o include.zip -d ios/NDISDK/include/
-          
-          echo "Vérification de la présence du fichier :"
-          ls -lh ios/NDISDK/lib/libndi_ios.a || (echo "ERREUR : Fichier libndi_ios.a manquant !" && exit 1)
+          echo "Vérification des fichiers locaux..."
+          ls -R ios/NDISDK/lib/
+          ls -R ios/NDISDK/include/ || echo "Dossier include non trouvé"
+
 
       - name: "Installer les dépendances Flutter"
         run: |
