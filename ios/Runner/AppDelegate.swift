@@ -25,6 +25,18 @@ import Flutter
                 } else {
                     result(FlutterError(code: "INVALID_ARG", message: "Source name missing", details: nil))
                 }
+            } else if call.method == "startSend" {
+                if let args = call.arguments as? [String: Any],
+                   let name = args["name"] as? String {
+                    NDIManager.shared.startSend(sourceName: name)
+                    result(true)
+                } else {
+                    NDIManager.shared.startSend(sourceName: "MIMO_NDI Camera")
+                    result(true)
+                }
+            } else if call.method == "stopSend" {
+                NDIManager.shared.stopSend()
+                result(true)
             } else {
                 result(FlutterMethodNotImplemented)
             }
