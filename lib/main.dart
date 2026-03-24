@@ -102,6 +102,18 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           colorFilter: ColorFilter.mode(Colors.black54, BlendMode.darken),
         ),
       ),
+  late List<Widget> _pages;
+
+  @override
+  void initState() {
+    super.initState();
+    _pages = [
+      NdiReceiveScreen(sources: _sources, isScanning: _isScanning, onRefresh: _startGlobalScan),
+      const NdiSendScreen(),
+      MultiviewScreen(sources: _sources),
+    ];
+    _startGlobalScan();
+...
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: AppBar(
@@ -119,7 +131,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           centerTitle: true,
         ),
         drawer: _buildDrawer(),
-        body: _pages[_selectedIndex],
+        body: IndexedStack(
+          index: _selectedIndex,
+          children: _pages,
+        ),
       ),
     );
   }
@@ -879,7 +894,14 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
               children: [
                 // Vidéo ou placeholder
                 if (source != null)
-                  Positioned.fill(child: NdiNativeView(sourceName: source))
+                  Positioned.fill(
+                    child: NdiNativeView(
+                      key: ValueKey("mv_slot_${index}_$source"),
+                      sourceName: source,
+                      quality: "Lowest", // ✅ On force la basse résolution en multiview
+                      muted: true, // ✅ Et on coupe le son pour libérer le Wi-Fi
+                    ),
+                  )
                 else
                   Center(
                     child: Column(

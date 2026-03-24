@@ -51,7 +51,7 @@ class NDIManager: NSObject {
                 self?.cachedSources = names
                 
                 // On dort un peu pour ne pas saturer le CPU
-                sleep(2)
+                sleep(10)
             }
         }
     }

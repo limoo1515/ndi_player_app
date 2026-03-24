@@ -26,12 +26,11 @@ class NDIView: NSObject, FlutterPlatformView {
     private var recvInstance: NDIlib_recv_instance_t?
     private let receiveQueue = DispatchQueue(label: "ndi.receive.queue", qos: .userInteractive)
     
-    // Throttling adaptatif pour réseau faible (20-30 fps)
+    // Throttling adaptatif
     private var lastFrameTime: TimeInterval = 0
-    private var frameInterval: TimeInterval = 0.05 // 20 fps pour stabilité maximale
-    private let ciContext = CIContext(options: [.workingColorSpace: NSNull(), .useSoftwareRenderer: false])
+    private var frameInterval: TimeInterval = 0.05
     
-    // Audio Player & Mute state
+    // Audio Player
     private var audioEngine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
     private var audioFormat: AVAudioFormat?
@@ -49,9 +48,6 @@ class NDIView: NSObject, FlutterPlatformView {
         
         if let params = args as? [String: Any] {
             self.isMuted = params["muted"] as? Bool ?? false
-            
-            // On n'active l'audio que si le flux n'est pas coupé dès le départ
-            // pour libérer immédiatement de la bande passante si signal faible.
             if !isMuted { setupAudioEngine() }
             
             if let name = params["name"] as? String {
@@ -59,7 +55,6 @@ class NDIView: NSObject, FlutterPlatformView {
                 self.startReceive(sourceName: name, quality: quality)
             }
         }
-
         startCaptureLoop()
     }
 
@@ -69,21 +64,17 @@ class NDIView: NSObject, FlutterPlatformView {
         audioEngine = AVAudioEngine()
         playerNode = AVAudioPlayerNode()
         guard let engine = audioEngine, let node = playerNode else { return }
-        
         engine.attach(node)
         audioFormat = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)
         if let format = audioFormat {
             engine.connect(node, to: engine.mainMixerNode, format: format)
         }
-        
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers, .duckOthers])
             try AVAudioSession.sharedInstance().setActive(true)
             try engine.start()
             node.play()
-        } catch {
-            print("❌ Audio Engine Error: \(error)")
-        }
+        } catch { print("❌ Audio Error: \(error)") }
     }
 
     private func startReceive(sourceName: String, quality: String) {
@@ -103,12 +94,12 @@ class NDIView: NSObject, FlutterPlatformView {
         
         guard let source = targetSource else { return }
         recvCreate.source_to_connect_to = source
+        // On demande du BGRA explicitement pour le rendu CIImage direct
         recvCreate.color_format = NDIlib_recv_color_format_BGRX_BGRA
         
-        // Mode 480p pour réseau ADSL/Wifi faible
-        if quality == "Lowest" || quality == "Medium" {
+        if quality == "Lowest" {
             recvCreate.bandwidth = NDIlib_recv_bandwidth_lowest
-            self.frameInterval = 0.05 // 20fps fix pour stabilité
+            self.frameInterval = 0.05 // 20fps stability
         } else {
             recvCreate.bandwidth = NDIlib_recv_bandwidth_highest
             self.frameInterval = 0.033 // 30fps
@@ -129,21 +120,20 @@ class NDIView: NSObject, FlutterPlatformView {
                 var a = NDIlib_audio_frame_v2_t()
                 var m = NDIlib_metadata_frame_t()
                 
-                // On capture UNE frame (système léger pour ne pas saturer le modem)
-                let type = NDIlib_recv_capture_v2(recv, &v, &a, &m, 0)
+                // --- CHIRURGIE NDI : TIMEOUT 16ms ---
+                // Le thread dort proprement en attendant la frame (recommandation Gemini)
+                let type = NDIlib_recv_capture_v2(recv, &v, &a, &m, 16)
                 
                 if type == NDIlib_frame_type_video {
                     let now = CACurrentMediaTime()
-                    // Affichage si intervalle respecté
                     if now - (self?.lastFrameTime ?? 0) >= (self?.frameInterval ?? 0.05) {
                         self?.lastFrameTime = now
-                        self?.renderWithMetal(v)
+                        self?.renderAndDisplay(v)
                     }
                     var mutV = v
                     NDIlib_recv_free_video_v2(recv, &mutV)
                 } else if type == NDIlib_frame_type_audio {
-                    // Si on est en "Mute", on libère direct pour soulager le Wi-Fi
-                    if !(self?.isMuted ?? true) { // Default to true if self is nil to prevent audio
+                    if !(self?.isMuted ?? true) {
                         self?.playAudio(a)
                     }
                     var mutA = a
@@ -151,8 +141,8 @@ class NDIView: NSObject, FlutterPlatformView {
                 } else if type == NDIlib_frame_type_metadata {
                     NDIlib_recv_free_metadata(recv, &m)
                 } else {
-                    // Si rien n'arrive, on laisse respirer le Wi-Fi (10ms)
-                    usleep(10000)
+                    // Petite pause si timeout
+                    usleep(4000)
                 }
             }
         }
@@ -174,17 +164,17 @@ class NDIView: NSObject, FlutterPlatformView {
                 memcpy(dest, data.advanced(by: ch * stride), noSamples * 4)
             }
         }
-        
-        // Scheduling souple pour éviter les saccades audio
         player.scheduleBuffer(pcmBuffer, at: nil, options: [])
     }
 
-    private func renderWithMetal(_ frame: NDIlib_video_frame_v2_t) {
+    private func renderAndDisplay(_ frame: NDIlib_video_frame_v2_t) {
         let width = Int(frame.xres)
         let height = Int(frame.yres)
         let stride = Int(frame.line_stride_in_bytes)
         guard let p_data = frame.p_data else { return }
         
+        // --- RENDU GPU DIRECT (Zero Copy) ---
+        // On crée la CIImage et on délègue tout l'affichage au GPU
         let ciImage = CIImage(
             bitmapData: Data(bytesNoCopy: p_data, count: stride * height, deallocator: .none),
             bytesPerRow: stride,
@@ -193,11 +183,12 @@ class NDIView: NSObject, FlutterPlatformView {
             colorSpace: CGColorSpaceCreateDeviceRGB()
         )
         
-        if let cgImg = ciContext.createCGImage(ciImage, from: ciImage.extent) {
-            let uiImage = UIImage(cgImage: cgImg)
-            DispatchQueue.main.async { [weak self] in
-                self?.imageView.image = uiImage
-            }
+        // Optimisation : On ne fait AUCUNE opération CPU ici.
+        // UIImageView(image: UIImage(ciImage:)) gère le rendu Metal en interne.
+        let uiImage = UIImage(ciImage: ciImage)
+        
+        DispatchQueue.main.async { [weak self] in
+            self?.imageView.image = uiImage
         }
     }
 
