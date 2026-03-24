@@ -21,14 +21,10 @@ class NDIManager: NSObject {
             return
         }
         
-        // Use v2 for better discovery
-        var findCreate = NDIlib_find_create_v2_t(show_local_sources: true, p_groups: nil, p_extra_ips: nil)
+        // Use standard create structure
+        var findCreate = NDIlib_find_create_t()
+        findCreate.show_local_sources = true
         findInstance = NDIlib_find_create_v2(&findCreate)
-        
-        if findInstance == nil {
-            print("❌ Failed to create NDI find instance, retrying with default...")
-            findInstance = NDIlib_find_create_v2(nil)
-        }
         
         print("✅ NDI discovery initialized")
     }
