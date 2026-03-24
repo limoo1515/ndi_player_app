@@ -26,12 +26,12 @@ class NDIView: NSObject, FlutterPlatformView {
     private var recvInstance: NDIlib_recv_instance_t?
     private let receiveQueue = DispatchQueue(label: "ndi.receive.queue", qos: .userInteractive)
     
-    // Video Throttling
+    // Throttling adaptatif pour réseau faible (20-30 fps)
     private var lastFrameTime: TimeInterval = 0
-    private let frameInterval: TimeInterval = 1.0 / 30.0
-    private let ciContext = CIContext(options: [.workingColorSpace: NSNull()])
+    private var frameInterval: TimeInterval = 0.05 // 20 fps pour stabilité maximale
+    private let ciContext = CIContext(options: [.workingColorSpace: NSNull(), .useSoftwareRenderer: false])
     
-    // --- SYSTÈME AUDIO (MIMO_NDI Audio Player) ---
+    // Audio Player
     private var audioEngine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
     private var audioFormat: AVAudioFormat?
@@ -49,7 +49,7 @@ class NDIView: NSObject, FlutterPlatformView {
         setupAudioEngine()
         
         if let params = args as? [String: Any], let name = params["name"] as? String {
-            let quality = params["quality"] as? String ?? "Highest"
+            let quality = params["quality"] as? String ?? "Lowest"
             self.startReceive(sourceName: name, quality: quality)
         }
 
@@ -61,25 +61,21 @@ class NDIView: NSObject, FlutterPlatformView {
     private func setupAudioEngine() {
         audioEngine = AVAudioEngine()
         playerNode = AVAudioPlayerNode()
-        
         guard let engine = audioEngine, let node = playerNode else { return }
         
         engine.attach(node)
-        // Format standard NDI (48kHz, Stereo, Float Planar)
         audioFormat = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)
-        
         if let format = audioFormat {
             engine.connect(node, to: engine.mainMixerNode, format: format)
         }
         
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: .mixWithOthers)
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers, .duckOthers])
             try AVAudioSession.sharedInstance().setActive(true)
             try engine.start()
             node.play()
-            print("🔊 Audio Engine Started")
         } catch {
-            print("❌ Error starting audio engine: \(error)")
+            print("❌ Audio Engine Error: \(error)")
         }
     }
 
@@ -101,9 +97,17 @@ class NDIView: NSObject, FlutterPlatformView {
         guard let source = targetSource else { return }
         recvCreate.source_to_connect_to = source
         recvCreate.color_format = NDIlib_recv_color_format_BGRX_BGRA
-        recvCreate.bandwidth = (quality == "Lowest" || quality == "Medium") ? NDIlib_recv_bandwidth_lowest : NDIlib_recv_bandwidth_highest
+        
+        // Mode 480p pour réseau ADSL/Wifi faible
+        if quality == "Lowest" || quality == "Medium" {
+            recvCreate.bandwidth = NDIlib_recv_bandwidth_lowest
+            self.frameInterval = 0.05 // 20fps fix pour stabilité
+        } else {
+            recvCreate.bandwidth = NDIlib_recv_bandwidth_highest
+            self.frameInterval = 0.033 // 30fps
+        }
+        
         recvCreate.allow_video_fields = true
-
         recvInstance = NDIlib_recv_create_v3(&recvCreate)
     }
 
@@ -111,43 +115,35 @@ class NDIView: NSObject, FlutterPlatformView {
         receiveQueue.async { [weak self] in
             while self?.isRunning == true {
                 guard let recv = self?.recvInstance else {
-                    usleep(10000); continue
+                    usleep(50000); continue
                 }
 
                 var v = NDIlib_video_frame_v2_t()
                 var a = NDIlib_audio_frame_v2_t()
                 var m = NDIlib_metadata_frame_t()
                 
-                // Aggressive Drop Frames Strategy
-                var latestVideo: NDIlib_video_frame_v2_t?
+                // On capture UNE frame (système léger pour ne pas saturer le modem)
+                let type = NDIlib_recv_capture_v2(recv, &v, &a, &m, 0)
                 
-                while true {
-                    let type = NDIlib_recv_capture_v2(recv, &v, &a, &m, 0)
-                    if type == NDIlib_frame_type_video {
-                        if var old = latestVideo { NDIlib_recv_free_video_v2(recv, &old) }
-                        latestVideo = v
-                    } else if type == NDIlib_frame_type_audio {
-                        // --- LECTURE AUDIO ---
-                        self?.playAudio(a)
-                        var mutA = a
-                        NDIlib_recv_free_audio_v2(recv, &mutA)
-                    } else if type == NDIlib_frame_type_metadata {
-                        NDIlib_recv_free_metadata(recv, &m)
-                    } else {
-                        break
-                    }
-                }
-                
-                if let video = latestVideo {
+                if type == NDIlib_frame_type_video {
                     let now = CACurrentMediaTime()
-                    if now - (self?.lastFrameTime ?? 0) >= (self?.frameInterval ?? 0) {
+                    // Affichage si intervalle respecté
+                    if now - (self?.lastFrameTime ?? 0) >= (self?.frameInterval ?? 0.05) {
                         self?.lastFrameTime = now
-                        self?.renderWithMetal(video)
+                        self?.renderWithMetal(v)
                     }
-                    var mutVideo = video
-                    NDIlib_recv_free_video_v2(recv, &mutVideo)
+                    var mutV = v
+                    NDIlib_recv_free_video_v2(recv, &mutV)
+                } else if type == NDIlib_frame_type_audio {
+                    // Lecture audio si possible, sinon on libère direct pour le réseau
+                    self?.playAudio(a)
+                    var mutA = a
+                    NDIlib_recv_free_audio_v2(recv, &mutA)
+                } else if type == NDIlib_frame_type_metadata {
+                    NDIlib_recv_free_metadata(recv, &m)
                 } else {
-                    usleep(2000)
+                    // Si rien n'arrive, on laisse respirer le Wi-Fi (10ms)
+                    usleep(10000)
                 }
             }
         }
@@ -156,28 +152,22 @@ class NDIView: NSObject, FlutterPlatformView {
     private func playAudio(_ frame: NDIlib_audio_frame_v2_t) {
         let noSamples = Int(frame.no_samples)
         let noChannels = Int(frame.no_channels)
+        guard let data = frame.p_data, noSamples > 0, let player = playerNode, let format = audioFormat else { return }
         
-        guard let data = frame.p_data, noSamples > 0, noChannels >= 1 else { return }
-        guard let player = playerNode, let format = audioFormat else { return }
-        
-        // On crée un buffer PCM compatible Apple
         guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(noSamples)) else { return }
         pcmBuffer.frameLength = AVAudioFrameCount(noSamples)
         
-        // NDI est Planar Float32. pcmBuffer.floatChannelData est aussi UnsafePointer<UnsafeMutablePointer<Float>>
         let channels = pcmBuffer.floatChannelData
-        let stride = Int(frame.channel_stride_in_bytes) / 4 // conversion offset bytes -> float samples
+        let stride = Int(frame.channel_stride_in_bytes) / 4
         
         for ch in 0..<min(noChannels, 2) {
-            let channelPointer = data.advanced(by: ch * stride)
-            let bufferPointer = channels?[ch]
-            if let dest = bufferPointer {
-                memcpy(dest, channelPointer, noSamples * 4)
+            if let dest = channels?[ch] {
+                memcpy(dest, data.advanced(by: ch * stride), noSamples * 4)
             }
         }
         
-        // On envoie le buffer au player
-        player.scheduleBuffer(pcmBuffer, at: nil, options: .interrupts)
+        // Scheduling souple pour éviter les saccades audio
+        player.scheduleBuffer(pcmBuffer, at: nil, options: [])
     }
 
     private func renderWithMetal(_ frame: NDIlib_video_frame_v2_t) {
