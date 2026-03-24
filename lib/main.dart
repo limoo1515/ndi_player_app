@@ -172,6 +172,11 @@ class _NdiReceiveScreenState extends State<NdiReceiveScreen> {
   Future<void> _startScan() async {
     setState(() => _isScanning = true);
     try {
+      // Premier scan pour réveiller le moteur NDI si besoin
+      await _channel.invokeMethod('getSources');
+      // Petit délai pour laisser la découverte se faire
+      await Future.delayed(const Duration(milliseconds: 500));
+      
       final List<dynamic>? result =
           await _channel.invokeMethod('getSources');
       if (mounted) {

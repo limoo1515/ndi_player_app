@@ -12,7 +12,7 @@ class NDIManager: NSObject {
     private var sendInstance: NDIlib_send_instance_t?
     private var captureSession: AVCaptureSession?
     private var videoOutput: AVCaptureVideoDataOutput?
-    private var sendQueue = DispatchQueue(label: "ndi.send.queue")
+    private var sendQueue = DispatchQueue(label: "ndi.send.queue", qos: .userInitiated)
     
     override init() {
         super.init()
@@ -20,29 +20,46 @@ class NDIManager: NSObject {
             print("❌ Failed to initialize NDI library")
             return
         }
-        var findCreate = NDIlib_find_create_t(show_local_sources: true, p_groups: nil, p_extra_ips: nil)
+        
+        // Use v2 for better discovery
+        var findCreate = NDIlib_find_create_v2_t(show_local_sources: true, p_groups: nil, p_extra_ips: nil)
         findInstance = NDIlib_find_create_v2(&findCreate)
+        
+        if findInstance == nil {
+            print("❌ Failed to create NDI find instance, retrying with default...")
+            findInstance = NDIlib_find_create_v2(nil)
+        }
+        
         print("✅ NDI discovery initialized")
     }
     
-    deinit {
-        stopSend() // Stop sending on deinit
-        if let find = findInstance { NDIlib_find_destroy(find) }
-        NDIlib_destroy()
-    }
-    
     func getSources() -> [String] {
-        guard let find = findInstance else { return [] }
-        NDIlib_find_wait_for_sources(find, 1000)
+        guard let find = findInstance else { 
+            print("⚠️ Find instance is nil")
+            return [] 
+        }
+        
+        // Wait multiple times to ensure the cache is populated
+        // 1000ms might be short on some networks
+        for _ in 0..<2 {
+            NDIlib_find_wait_for_sources(find, 1000)
+        }
+        
         var noSources: UInt32 = 0
         let sources = NDIlib_find_get_current_sources(find, &noSources)
+        
         var sourceNames = [String]()
         if noSources > 0, let sources = sources {
             for i in 0..<Int(noSources) {
                 let name = String(cString: sources[i].p_ndi_name)
-                sourceNames.append(name)
+                // Filter out empty names
+                if !name.isEmpty {
+                    sourceNames.append(name)
+                }
             }
         }
+        
+        print("🔍 Found \(sourceNames.count) NDI sources")
         return sourceNames
     }
     
@@ -103,8 +120,7 @@ extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         let data = CVPixelBufferGetBaseAddress(pixelBuffer)
         
         var videoFrame = NDIlib_video_frame_v2_t()
-        videoFrame.xres = Int32(width)
-        videoFrame.yres = Int32(height)
+        videoFrame.xres = Int32(width); videoFrame.yres = Int32(height)
         videoFrame.FourCC = NDIlib_FourCC_type_BGRA
         videoFrame.frame_rate_N = 30000; videoFrame.frame_rate_D = 1001
         videoFrame.picture_aspect_ratio = Float(width) / Float(height)
