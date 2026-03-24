@@ -65,14 +65,23 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   Future<void> _startGlobalScan() async {
     if (_isScanning) return;
+    _isScanning = true;
     try {
       final List<dynamic>? result = await _channel.invokeMethod('getSources');
-      if (mounted) {
-        setState(() {
-          _sources = result?.cast<String>() ?? [];
-        });
+      if (mounted && result != null) {
+        final List<String> newSources = result.cast<String>();
+        // On ne fait le setState que si la liste change pour éviter de clignoter
+        if (newSources.length != _sources.length || 
+            !newSources.every((s) => _sources.contains(s))) {
+          setState(() {
+            _sources = newSources;
+          });
+        }
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _isScanning = false;
+    }
   }
 
   final List<String> _titles = ["Réception Flux", "Transmettre Caméra", "Multiview 4"];
@@ -273,56 +282,64 @@ class _NdiReceiveScreenState extends State<NdiReceiveScreen> {
                     ],
                   ),
                 )
-              : ListView.builder(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 10),
-                  itemCount: widget.sources.length,
-                  itemBuilder: (context, index) {
-                    final source = widget.sources[index];
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 10.0),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(14),
-                        child: BackdropFilter(
-                          filter:
-                              ImageFilter.blur(sigmaX: 5, sigmaY: 5),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.07),
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(
-                                  color: Colors.white.withOpacity(0.12)),
-                            ),
-                            child: ListTile(
-                              contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 4),
-                              leading: Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color:
-                                      Colors.greenAccent.withOpacity(0.15),
-                                  shape: BoxShape.circle,
+                : ListView.builder(
+                    padding: const EdgeInsets.all(12),
+                    itemCount: widget.sources.length,
+                    itemBuilder: (context, index) {
+                      final source = widget.sources[index];
+                      // ✅ Utilisation de Card avec InkWell pour un feedback INSTANTANÉ
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        color: Colors.white.withOpacity(0.08),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          side: BorderSide(color: Colors.white.withOpacity(0.1)),
+                        ),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () => _openPlayer(source),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 12),
+                            child: Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: Colors.greenAccent.withOpacity(0.12),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(Icons.sensors,
+                                      color: Colors.greenAccent, size: 24),
                                 ),
-                                child: const Icon(Icons.sensors,
-                                    color: Colors.greenAccent),
-                              ),
-                              title: Text(source,
-                                  style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w600)),
-                              subtitle: const Text('NDI® Source',
-                                  style: TextStyle(color: Colors.white38)),
-                              trailing: const Icon(Icons.play_circle_fill,
-                                  color: Colors.greenAccent, size: 34),
-                              // ✅ UN SEUL CLIC → PLEIN ÉCRAN IMMÉDIATEMENT
-                              onTap: () => _openPlayer(source),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(source,
+                                          style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.bold)),
+                                      const Text('📡 Flux NDI® Direct',
+                                          style: TextStyle(
+                                              color: Colors.white38,
+                                              fontSize: 12)),
+                                    ],
+                                  ),
+                                ),
+                                const Icon(Icons.play_circle_fill,
+                                    color: Colors.greenAccent, size: 36),
+                              ],
                             ),
                           ),
                         ),
-                      ),
-                    );
-                  },
-                ),
+                      );
+                    },
+                  ),
         ),
       ],
     );
