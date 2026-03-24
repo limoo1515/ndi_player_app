@@ -375,12 +375,17 @@ class NdiPlayerScreen extends StatefulWidget {
 class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
   static const _channel = MethodChannel('com.antigravity/ndi');
   String _quality = "Highest";
-  bool _isLandscape = false;
+  bool _isLandscape = true;
   bool _isMuted = false;
 
   @override
   void initState() {
     super.initState();
+    // ✅ On force le paysage dès l'entrée pour le monitoring
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
   }
 
   @override
