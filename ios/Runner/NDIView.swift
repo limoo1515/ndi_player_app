@@ -20,7 +20,7 @@ class NDIView: NSObject, FlutterPlatformView {
     private var imageView: UIImageView
     private var displayTimer: CADisplayLink?
     
-    // PER VIEW RECEIVER
+    // CHAQUE VUE A SON PROPRE RÉCEPTEUR (Indispensable pour Multiview 4)
     private var recvInstance: NDIlib_recv_instance_t?
     private var sourceName: String?
 
@@ -37,17 +37,16 @@ class NDIView: NSObject, FlutterPlatformView {
         if let params = args as? [String: Any], let name = params["name"] as? String {
             self.sourceName = name
             let quality = params["quality"] as? String ?? "Highest"
-            self.connect(to: name, quality: quality)
+            self.startReceive(sourceName: name, quality: quality)
         }
 
-        // CADisplayLink is synced with screen refresh (60Hz / 120Hz)
         displayTimer = CADisplayLink(target: self, selector: #selector(updateFrame))
         displayTimer?.add(to: .main, forMode: .common)
     }
 
     func view() -> UIView { return _view }
 
-    private func connect(to sourceName: String, quality: String) {
+    private func startReceive(sourceName: String, quality: String) {
         guard let find = NDIManager.shared.findInstance else { return }
         
         var noSources: UInt32 = 0
@@ -63,30 +62,37 @@ class NDIView: NSObject, FlutterPlatformView {
         
         guard let source = targetSource else { return }
         
-        // Broadcast Optimization : Zero-Delay
-        var recvCreate = NDIlib_recv_create_v3_t()
-        recvCreate.source_to_connect_to = source
-        // Standard high-speed display format
-        recvCreate.color_format = NDIlib_recv_color_format_BGRX_BGRA
+        // --- CONFIGURATION CHIRURGICALE (Zero-Delay / Switch 100Mbps) ---
+        var recvCreate = NDIlib_recv_create_t()
         
-        // ✅ DEINTERLACING REQUIRED for 1080i50 source (avoid combing)
-        recvCreate.allow_video_fields = true
-        
-        // Quality bandwidth
-        if quality == "Highest" {
-            recvCreate.bandwidth = NDIlib_recv_bandwidth_highest
-        } else {
+        // 1. Gestion du switch 100Mbps (Lowest = 480p / 20ms latency)
+        if quality == "Lowest" {
             recvCreate.bandwidth = NDIlib_recv_bandwidth_lowest
+        } else {
+            recvCreate.bandwidth = NDIlib_recv_bandwidth_highest
         }
         
-        recvInstance = NDIlib_recv_create_v3(&recvCreate)
+        // 2. Format de couleur optimisé (Fastest pour le CPU)
+        // Note: BGRX est utilisé pour l'affichage direct sur iOS
+        recvCreate.color_format = NDIlib_recv_color_format_BGRX_BGRA
+        
+        // 3. Fix pour ton TriCaster 1080i50 (Désentrelacement hardware)
+        recvCreate.allow_video_fields = true 
+
+        // Création du récepteur v2 pour compatibilité maximale
+        recvInstance = NDIlib_recv_create_v2(&recvCreate)
+        
+        // Connexion explicite
+        var mutSource = source
+        NDIlib_recv_connect(recvInstance, &mutSource)
+        
+        print("✅ NDI connected to \(sourceName) [\(quality)]")
     }
 
     @objc private func updateFrame() {
         guard let recv = recvInstance else { return }
         
-        // ✅ LOGIQUE DE "DISCARD" : Éviter l'accumulation de retard (Zero-Delay logic)
-        // On vide le buffer réseau NDI pour ne garder que la TOUTE DERNIÈRE trame reçue.
+        // --- LOGIQUE DE "DISCARD" : Suppression des 500ms de retard accumulé ---
         var lastVideoFrame: NDIlib_video_frame_v2_t?
         
         while true {
@@ -94,11 +100,10 @@ class NDIView: NSObject, FlutterPlatformView {
             var a = NDIlib_audio_frame_v2_t()
             var m = NDIlib_metadata_frame_t()
             
-            // Timeout à 0 pour être instantané (non-bloquant)
+            // Timeout à 0 = Instantané (ne bloque pas le thread UI)
             let res = NDIlib_recv_capture_v2(recv, &v, &a, &m, 0)
             
             if res == NDIlib_frame_type_video {
-                // Si on a déjà une trame dans 'lastVideoFrame', on la libère (elle est trop vieille)
                 if var old = lastVideoFrame {
                     NDIlib_recv_free_video_v2(recv, &old)
                 }
@@ -108,14 +113,13 @@ class NDIView: NSObject, FlutterPlatformView {
             } else if res == NDIlib_frame_type_metadata {
                 NDIlib_recv_free_metadata(recv, &m)
             } else {
-                // Plus rien dans le buffer réseau
                 break
             }
         }
         
-        // On ne traite que la trame la plus récente
         guard let videoFrame = lastVideoFrame else { return }
         
+        // Conversion vers UIImage
         let width = Int(videoFrame.xres)
         let height = Int(videoFrame.yres)
         let lineStride = Int(videoFrame.line_stride_in_bytes)

@@ -43,7 +43,7 @@
 
 	<!-- NDI & NETWORK PERMISSIONS -->
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>NDI discovery requires access to your local network to find MIMO_NDI streams.</string>
+	<string>Mimo-Ndi a besoin d'accéder au réseau local pour trouver le TriCaster.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_ndi._tcp</string>
