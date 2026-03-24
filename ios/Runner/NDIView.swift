@@ -26,9 +26,12 @@ class NDIView: NSObject, FlutterPlatformView {
     private var recvInstance: NDIlib_recv_instance_t?
     private let receiveQueue = DispatchQueue(label: "ndi.receive.queue", qos: .userInteractive)
     
-    // Throttling adaptatif
+    // Throttling (30 fps / 0.033s)
     private var lastFrameTime: TimeInterval = 0
-    private var frameInterval: TimeInterval = 0.05
+    private var frameInterval: TimeInterval = 0.033
+    
+    // Contexte CIContext PERSISTANT pour rendu GPU Haute Performance
+    private let ciContext = CIContext(options: [.workingColorSpace: NSNull(), .useSoftwareRenderer: false])
     
     // Audio Player
     private var audioEngine: AVAudioEngine?
@@ -94,17 +97,8 @@ class NDIView: NSObject, FlutterPlatformView {
         
         guard let source = targetSource else { return }
         recvCreate.source_to_connect_to = source
-        // On demande du BGRA explicitement pour le rendu CIImage direct
         recvCreate.color_format = NDIlib_recv_color_format_BGRX_BGRA
-        
-        if quality == "Lowest" {
-            recvCreate.bandwidth = NDIlib_recv_bandwidth_lowest
-            self.frameInterval = 0.05 // 20fps stability
-        } else {
-            recvCreate.bandwidth = NDIlib_recv_bandwidth_highest
-            self.frameInterval = 0.033 // 30fps
-        }
-        
+        recvCreate.bandwidth = (quality == "Lowest") ? NDIlib_recv_bandwidth_lowest : NDIlib_recv_bandwidth_highest
         recvCreate.allow_video_fields = true
         recvInstance = NDIlib_recv_create_v3(&recvCreate)
     }
@@ -120,14 +114,15 @@ class NDIView: NSObject, FlutterPlatformView {
                 var a = NDIlib_audio_frame_v2_t()
                 var m = NDIlib_metadata_frame_t()
                 
-                // --- CHIRURGIE NDI : TIMEOUT 16ms ---
-                // Le thread dort proprement en attendant la frame (recommandation Gemini)
+                // Timeout 16ms pour ne pas saturer le CPU
                 let type = NDIlib_recv_capture_v2(recv, &v, &a, &m, 16)
                 
                 if type == NDIlib_frame_type_video {
                     let now = CACurrentMediaTime()
-                    if now - (self?.lastFrameTime ?? 0) >= (self?.frameInterval ?? 0.05) {
+                    if now - (self?.lastFrameTime ?? 0) >= (self?.frameInterval ?? 0.033) {
                         self?.lastFrameTime = now
+                        // On lance le rendu et on attend qu'il soit "figé" dans le GPU
+                        // avant de libérer le buffer NDI (SÉCURITÉ MAXIMALE)
                         self?.renderAndDisplay(v)
                     }
                     var mutV = v
@@ -141,7 +136,6 @@ class NDIView: NSObject, FlutterPlatformView {
                 } else if type == NDIlib_frame_type_metadata {
                     NDIlib_recv_free_metadata(recv, &m)
                 } else {
-                    // Petite pause si timeout
                     usleep(4000)
                 }
             }
@@ -173,8 +167,8 @@ class NDIView: NSObject, FlutterPlatformView {
         let stride = Int(frame.line_stride_in_bytes)
         guard let p_data = frame.p_data else { return }
         
-        // --- RENDU GPU DIRECT (Zero Copy) ---
-        // On crée la CIImage et on délègue tout l'affichage au GPU
+        // --- RENDU GPU DIRECT (ZÉRO COPY SÉCURISÉ) ---
+        // On crée la CIImage sans copie mémoire
         let ciImage = CIImage(
             bitmapData: Data(bytesNoCopy: p_data, count: stride * height, deallocator: .none),
             bytesPerRow: stride,
@@ -183,12 +177,14 @@ class NDIView: NSObject, FlutterPlatformView {
             colorSpace: CGColorSpaceCreateDeviceRGB()
         )
         
-        // Optimisation : On ne fait AUCUNE opération CPU ici.
-        // UIImageView(image: UIImage(ciImage:)) gère le rendu Metal en interne.
-        let uiImage = UIImage(ciImage: ciImage)
-        
-        DispatchQueue.main.async { [weak self] in
-            self?.imageView.image = uiImage
+        // --- LA CORRECTION "BÉTON" ---
+        // On force le GPU à "figer" l'image dans sa mémoire AVANT de rendre la main.
+        // Une fois createCGImage terminé, on peut libérer la frame NDI en toute sécurité.
+        if let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) {
+            let uiImage = UIImage(cgImage: cgImage)
+            DispatchQueue.main.async { [weak self] in
+                self?.imageView.image = uiImage
+            }
         }
     }
 
