@@ -31,10 +31,11 @@ class NDIView: NSObject, FlutterPlatformView {
     private var frameInterval: TimeInterval = 0.05 // 20 fps pour stabilité maximale
     private let ciContext = CIContext(options: [.workingColorSpace: NSNull(), .useSoftwareRenderer: false])
     
-    // Audio Player
+    // Audio Player & Mute state
     private var audioEngine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
     private var audioFormat: AVAudioFormat?
+    private var isMuted = false
 
     init(frame: CGRect, viewIdentifier viewId: Int64, arguments args: Any?, binaryMessenger messenger: FlutterBinaryMessenger?) {
         _view = UIView(frame: frame)
@@ -46,11 +47,17 @@ class NDIView: NSObject, FlutterPlatformView {
         
         super.init()
         
-        setupAudioEngine()
-        
-        if let params = args as? [String: Any], let name = params["name"] as? String {
-            let quality = params["quality"] as? String ?? "Lowest"
-            self.startReceive(sourceName: name, quality: quality)
+        if let params = args as? [String: Any] {
+            self.isMuted = params["muted"] as? Bool ?? false
+            
+            // On n'active l'audio que si le flux n'est pas coupé dès le départ
+            // pour libérer immédiatement de la bande passante si signal faible.
+            if !isMuted { setupAudioEngine() }
+            
+            if let name = params["name"] as? String {
+                let quality = params["quality"] as? String ?? "Highest"
+                self.startReceive(sourceName: name, quality: quality)
+            }
         }
 
         startCaptureLoop()
@@ -135,8 +142,10 @@ class NDIView: NSObject, FlutterPlatformView {
                     var mutV = v
                     NDIlib_recv_free_video_v2(recv, &mutV)
                 } else if type == NDIlib_frame_type_audio {
-                    // Lecture audio si possible, sinon on libère direct pour le réseau
-                    self?.playAudio(a)
+                    // Si on est en "Mute", on libère direct pour soulager le Wi-Fi
+                    if !(self?.isMuted ?? true) { // Default to true if self is nil to prevent audio
+                        self?.playAudio(a)
+                    }
                     var mutA = a
                     NDIlib_recv_free_audio_v2(recv, &mutA)
                 } else if type == NDIlib_frame_type_metadata {

@@ -361,6 +361,7 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
   static const _channel = MethodChannel('com.antigravity/ndi');
   String _quality = "Highest";
   bool _isLandscape = false;
+  bool _isMuted = false;
 
   @override
   void initState() {
@@ -445,13 +446,12 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
           // ── VIDÉO : centrée, 16:9, avec bandes noires en portrait
           Center(
             child: AspectRatio(
-              // 16:9 → en portrait, le flux occupera toute la largeur
-              // avec des bandes noires en haut/bas (comportement correct)
               aspectRatio: 16 / 9,
               child: NdiNativeView(
-                key: ValueKey("${widget.sourceName}_$_quality"),
+                key: ValueKey("${widget.sourceName}_${_quality}_$_isMuted"),
                 sourceName: widget.sourceName,
                 quality: _quality,
+                muted: _isMuted,
               ),
             ),
           ),
@@ -494,12 +494,25 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
             ),
           ),
 
-          // ── BOUTONS BAS : QUALITÉ + PLEIN ÉCRAN PAYSAGE
           Positioned(
             bottom: MediaQuery.of(context).padding.bottom + 20,
             right: 16,
             child: Column(
               children: [
+                // 🔊 Bouton Mute (Pour libérer du Wi-Fi si signal trop faible)
+                GestureDetector(
+                  onTap: () => setState(() => _isMuted = !_isMuted),
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: _isMuted ? Colors.redAccent : Colors.black54,
+                      borderRadius: BorderRadius.circular(30),
+                    ),
+                    child: Icon(_isMuted ? Icons.volume_off : Icons.volume_up,
+                        color: Colors.white, size: 26),
+                  ),
+                ),
                 // Engrenage → Qualité
                 GestureDetector(
                   onTap: _showQualityMenu,
