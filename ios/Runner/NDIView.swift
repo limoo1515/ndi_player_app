@@ -40,6 +40,7 @@ class NDIView: NSObject, FlutterPlatformView {
             self.connect(to: name, quality: quality)
         }
 
+        // CADisplayLink is synced with screen refresh (60Hz / 120Hz)
         displayTimer = CADisplayLink(target: self, selector: #selector(updateFrame))
         displayTimer?.add(to: .main, forMode: .common)
     }
@@ -62,9 +63,14 @@ class NDIView: NSObject, FlutterPlatformView {
         
         guard let source = targetSource else { return }
         
+        // Broadcast Optimization : Zero-Delay
         var recvCreate = NDIlib_recv_create_v3_t()
         recvCreate.source_to_connect_to = source
+        // Standard high-speed display format
         recvCreate.color_format = NDIlib_recv_color_format_BGRX_BGRA
+        
+        // ✅ DEINTERLACING REQUIRED for 1080i50 source (avoid combing)
+        recvCreate.allow_video_fields = true
         
         // Quality bandwidth
         if quality == "Highest" {
@@ -79,34 +85,54 @@ class NDIView: NSObject, FlutterPlatformView {
     @objc private func updateFrame() {
         guard let recv = recvInstance else { return }
         
-        var videoFrame = NDIlib_video_frame_v2_t()
-        var audioFrame = NDIlib_audio_frame_v2_t()
-        var metadataFrame = NDIlib_metadata_frame_t()
+        // ✅ LOGIQUE DE "DISCARD" : Éviter l'accumulation de retard (Zero-Delay logic)
+        // On vide le buffer réseau NDI pour ne garder que la TOUTE DERNIÈRE trame reçue.
+        var lastVideoFrame: NDIlib_video_frame_v2_t?
         
-        let res = NDIlib_recv_capture_v2(recv, &videoFrame, &audioFrame, &metadataFrame, 0)
-        
-        switch res {
-        case NDIlib_frame_type_video:
-            let width = Int(videoFrame.xres)
-            let height = Int(videoFrame.yres)
-            let lineStride = Int(videoFrame.line_stride_in_bytes)
-            let colorSpace = CGColorSpaceCreateDeviceRGB()
-            let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        while true {
+            var v = NDIlib_video_frame_v2_t()
+            var a = NDIlib_audio_frame_v2_t()
+            var m = NDIlib_metadata_frame_t()
             
-            if let context = CGContext(
-                data: videoFrame.p_data,
-                width: width, height: height,
-                bitsPerComponent: 8, bytesPerRow: lineStride,
-                space: colorSpace, bitmapInfo: bitmapInfo.rawValue
-            ), let cgImage = context.makeImage() {
-                self.imageView.image = UIImage(cgImage: cgImage)
+            // Timeout à 0 pour être instantané (non-bloquant)
+            let res = NDIlib_recv_capture_v2(recv, &v, &a, &m, 0)
+            
+            if res == NDIlib_frame_type_video {
+                // Si on a déjà une trame dans 'lastVideoFrame', on la libère (elle est trop vieille)
+                if var old = lastVideoFrame {
+                    NDIlib_recv_free_video_v2(recv, &old)
+                }
+                lastVideoFrame = v
+            } else if res == NDIlib_frame_type_audio {
+                NDIlib_recv_free_audio_v2(recv, &a)
+            } else if res == NDIlib_frame_type_metadata {
+                NDIlib_recv_free_metadata(recv, &m)
+            } else {
+                // Plus rien dans le buffer réseau
+                break
             }
-            NDIlib_recv_free_video_v2(recv, &videoFrame)
-            
-        case NDIlib_frame_type_audio: NDIlib_recv_free_audio_v2(recv, &audioFrame)
-        case NDIlib_frame_type_metadata: NDIlib_recv_free_metadata(recv, &metadataFrame)
-        default: break
         }
+        
+        // On ne traite que la trame la plus récente
+        guard let videoFrame = lastVideoFrame else { return }
+        
+        let width = Int(videoFrame.xres)
+        let height = Int(videoFrame.yres)
+        let lineStride = Int(videoFrame.line_stride_in_bytes)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        
+        if let context = CGContext(
+            data: videoFrame.p_data,
+            width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: lineStride,
+            space: colorSpace, bitmapInfo: bitmapInfo.rawValue
+        ), let cgImage = context.makeImage() {
+            self.imageView.image = UIImage(cgImage: cgImage)
+        }
+        
+        var mutFrame = videoFrame
+        NDIlib_recv_free_video_v2(recv, &mutFrame)
     }
     
     deinit {

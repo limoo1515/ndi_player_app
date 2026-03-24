@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:ui';
+import 'dart:async';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -40,14 +41,46 @@ class MainNavigationScreen extends StatefulWidget {
 }
 
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
+  static const _channel = MethodChannel('com.antigravity/ndi');
   int _selectedIndex = 0;
+  List<String> _sources = [];
+  bool _isScanning = false;
+  Timer? _scanTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _startGlobalScan();
+    // Scan toutes les 5 secondes en background pour l'instantanéité
+    _scanTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      _startGlobalScan();
+    });
+  }
+
+  @override
+  void dispose() {
+    _scanTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _startGlobalScan() async {
+    if (_isScanning) return;
+    try {
+      final List<dynamic>? result = await _channel.invokeMethod('getSources');
+      if (mounted) {
+        setState(() {
+          _sources = result?.cast<String>() ?? [];
+        });
+      }
+    } catch (_) {}
+  }
 
   final List<String> _titles = ["Réception Flux", "Transmettre Caméra", "Multiview 4"];
 
   List<Widget> get _pages => [
-        const NdiReceiveScreen(),
+        NdiReceiveScreen(sources: _sources, isScanning: _isScanning, onRefresh: _startGlobalScan),
         const NdiSendScreen(),
-        const MultiviewScreen(),
+        MultiviewScreen(sources: _sources),
       ];
 
   @override
@@ -152,42 +185,25 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 // ÉCRAN RÉCEPTION - LISTE DES SOURCES
 // ─────────────────────────────────────────────
 class NdiReceiveScreen extends StatefulWidget {
-  const NdiReceiveScreen({super.key});
+  final List<String> sources;
+  final bool isScanning;
+  final VoidCallback onRefresh;
+  
+  const NdiReceiveScreen({
+    super.key, 
+    required this.sources, 
+    required this.isScanning, 
+    required this.onRefresh
+  });
 
   @override
   State<NdiReceiveScreen> createState() => _NdiReceiveScreenState();
 }
 
 class _NdiReceiveScreenState extends State<NdiReceiveScreen> {
-  static const _channel = MethodChannel('com.antigravity/ndi');
-  List<String> _sources = [];
-  bool _isScanning = false;
-
   @override
   void initState() {
     super.initState();
-    _startScan();
-  }
-
-  Future<void> _startScan() async {
-    setState(() => _isScanning = true);
-    try {
-      // Premier scan pour réveiller le moteur NDI si besoin
-      await _channel.invokeMethod('getSources');
-      // Petit délai pour laisser la découverte se faire
-      await Future.delayed(const Duration(milliseconds: 500));
-      
-      final List<dynamic>? result =
-          await _channel.invokeMethod('getSources');
-      if (mounted) {
-        setState(() {
-          _sources = result?.cast<String>() ?? [];
-          _isScanning = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => _isScanning = false);
-    }
   }
 
   void _openPlayer(String source) {
@@ -216,21 +232,21 @@ class _NdiReceiveScreenState extends State<NdiReceiveScreen> {
                       fontWeight: FontWeight.bold,
                       letterSpacing: 1.5,
                       color: Colors.white54)),
-              _isScanning
+              widget.isScanning
                   ? const SizedBox(
                       width: 20,
                       height: 20,
                       child:
                           CircularProgressIndicator(strokeWidth: 2))
                   : IconButton(
-                      onPressed: _startScan,
+                      onPressed: widget.onRefresh,
                       icon: const Icon(Icons.refresh, size: 20)),
             ],
           ),
         ),
         const Divider(height: 1, color: Colors.white10),
         Expanded(
-          child: _sources.isEmpty
+          child: widget.sources.isEmpty
               ? Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -239,14 +255,14 @@ class _NdiReceiveScreenState extends State<NdiReceiveScreen> {
                           size: 48, color: Colors.white24),
                       const SizedBox(height: 16),
                       Text(
-                          _isScanning
+                          widget.isScanning
                               ? 'Recherche de sources NDI...'
                               : 'Aucune source trouvée',
                           style: const TextStyle(color: Colors.white38)),
-                      if (!_isScanning) ...[
+                      if (!widget.isScanning) ...[
                         const SizedBox(height: 12),
                         ElevatedButton.icon(
-                          onPressed: _startScan,
+                          onPressed: widget.onRefresh,
                           icon: const Icon(Icons.refresh),
                           label: const Text('Rechercher'),
                           style: ElevatedButton.styleFrom(
@@ -260,9 +276,9 @@ class _NdiReceiveScreenState extends State<NdiReceiveScreen> {
               : ListView.builder(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 10, vertical: 10),
-                  itemCount: _sources.length,
+                  itemCount: widget.sources.length,
                   itemBuilder: (context, index) {
-                    final source = _sources[index];
+                    final source = widget.sources[index];
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 10.0),
                       child: ClipRRect(
@@ -705,33 +721,19 @@ class _NdiSendScreenState extends State<NdiSendScreen> {
 // ÉCRAN MULTIVIEW 4 SOURCES
 // ─────────────────────────────────────────────
 class MultiviewScreen extends StatefulWidget {
-  const MultiviewScreen({super.key});
+  final List<String> sources;
+  const MultiviewScreen({super.key, required this.sources});
 
   @override
   State<MultiviewScreen> createState() => _MultiviewScreenState();
 }
 
 class _MultiviewScreenState extends State<MultiviewScreen> {
-  static const _channel = MethodChannel('com.antigravity/ndi');
-  List<String> _sources = [];
   final List<String?> _slots = [null, null, null, null];
 
   @override
   void initState() {
     super.initState();
-    _scan();
-  }
-
-  Future<void> _scan() async {
-    try {
-      final List<dynamic>? result =
-          await _channel.invokeMethod('getSources');
-      if (mounted) {
-        setState(() {
-          _sources = result?.cast<String>() ?? [];
-        });
-      }
-    } catch (_) {}
   }
 
   void _assignSource(int slot) {
@@ -761,7 +763,7 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
                   style: const TextStyle(
                       fontSize: 16, fontWeight: FontWeight.bold)),
             ),
-            ..._sources.map((s) => ListTile(
+            ...widget.sources.map((s) => ListTile(
                   leading: const Icon(Icons.sensors,
                       color: Colors.greenAccent),
                   title: Text(s),
