@@ -79,8 +79,8 @@ class NDIView: NSObject, FlutterPlatformView {
         // 3. Fix pour ton TriCaster 1080i50 (Désentrelacement hardware)
         recvCreate.allow_video_fields = true 
 
-        // Création du récepteur v2 pour compatibilité maximale
-        recvInstance = NDIlib_recv_create_v2(&recvCreate)
+        // Création du récepteur v3 comme recommandé
+        recvInstance = NDIlib_recv_create_v3(&recvCreate)
         
         // Connexion explicite
         var mutSource = source
