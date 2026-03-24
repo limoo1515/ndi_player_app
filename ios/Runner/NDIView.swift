@@ -1,6 +1,7 @@
 import Flutter
 import UIKit
 import CoreImage
+import AVFoundation
 
 class NDIViewFactory: NSObject, FlutterPlatformViewFactory {
     private var messenger: FlutterBinaryMessenger
@@ -25,12 +26,15 @@ class NDIView: NSObject, FlutterPlatformView {
     private var recvInstance: NDIlib_recv_instance_t?
     private let receiveQueue = DispatchQueue(label: "ndi.receive.queue", qos: .userInteractive)
     
-    // UI Throttling
+    // Video Throttling
     private var lastFrameTime: TimeInterval = 0
     private let frameInterval: TimeInterval = 1.0 / 30.0
-    
-    // CoreImage Context pour rendu GPU (Metal)
     private let ciContext = CIContext(options: [.workingColorSpace: NSNull()])
+    
+    // --- SYSTÈME AUDIO (MIMO_NDI Audio Player) ---
+    private var audioEngine: AVAudioEngine?
+    private var playerNode: AVAudioPlayerNode?
+    private var audioFormat: AVAudioFormat?
 
     init(frame: CGRect, viewIdentifier viewId: Int64, arguments args: Any?, binaryMessenger messenger: FlutterBinaryMessenger?) {
         _view = UIView(frame: frame)
@@ -42,8 +46,10 @@ class NDIView: NSObject, FlutterPlatformView {
         
         super.init()
         
+        setupAudioEngine()
+        
         if let params = args as? [String: Any], let name = params["name"] as? String {
-            let quality = params["quality"] as? String ?? "Lowest" // ✅ Support Low Bandwidth Proxy
+            let quality = params["quality"] as? String ?? "Highest"
             self.startReceive(sourceName: name, quality: quality)
         }
 
@@ -52,9 +58,33 @@ class NDIView: NSObject, FlutterPlatformView {
 
     func view() -> UIView { return _view }
 
+    private func setupAudioEngine() {
+        audioEngine = AVAudioEngine()
+        playerNode = AVAudioPlayerNode()
+        
+        guard let engine = audioEngine, let node = playerNode else { return }
+        
+        engine.attach(node)
+        // Format standard NDI (48kHz, Stereo, Float Planar)
+        audioFormat = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)
+        
+        if let format = audioFormat {
+            engine.connect(node, to: engine.mainMixerNode, format: format)
+        }
+        
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: .mixWithOthers)
+            try AVAudioSession.sharedInstance().setActive(true)
+            try engine.start()
+            node.play()
+            print("🔊 Audio Engine Started")
+        } catch {
+            print("❌ Error starting audio engine: \(error)")
+        }
+    }
+
     private func startReceive(sourceName: String, quality: String) {
         var recvCreate = NDIlib_recv_create_v3_t()
-        
         guard let find = NDIManager.shared.findInstance else { return }
         var noSources: UInt32 = 0
         let currentSources = NDIlib_find_get_current_sources(find, &noSources)
@@ -70,23 +100,11 @@ class NDIView: NSObject, FlutterPlatformView {
         
         guard let source = targetSource else { return }
         recvCreate.source_to_connect_to = source
-        
-        // --- OPTIMISATION RÉSEAU FAIBLE ---
-        // On force le mode BGRX (plus simple pour le GPU iOS) 
-        // ou Fastest (pourrait être UYVY)
         recvCreate.color_format = NDIlib_recv_color_format_BGRX_BGRA
-        
-        // Forcer Lowest Bandwidth si le réseau rame
-        if quality == "Lowest" || quality == "Medium" {
-            recvCreate.bandwidth = NDIlib_recv_bandwidth_lowest
-        } else {
-            recvCreate.bandwidth = NDIlib_recv_bandwidth_highest
-        }
-        
-        recvCreate.allow_video_fields = true // 50i Fix
+        recvCreate.bandwidth = (quality == "Lowest" || quality == "Medium") ? NDIlib_recv_bandwidth_lowest : NDIlib_recv_bandwidth_highest
+        recvCreate.allow_video_fields = true
 
         recvInstance = NDIlib_recv_create_v3(&recvCreate)
-        print("✅ NDI connected [\(quality)] to \(sourceName)")
     }
 
     private func startCaptureLoop() {
@@ -100,17 +118,19 @@ class NDIView: NSObject, FlutterPlatformView {
                 var a = NDIlib_audio_frame_v2_t()
                 var m = NDIlib_metadata_frame_t()
                 
-                // --- STRATÉGIE "DROP FRAMES" AGRESSIVE ---
-                // On vide COMPLÈTEMENT le tampon réseau pour ne garder que la frame la plus récente.
-                // Cela élimine l'effet d'image qui "marche lentement" (rattrapage de retard).
-                var latestFrame: NDIlib_video_frame_v2_t?
+                // Aggressive Drop Frames Strategy
+                var latestVideo: NDIlib_video_frame_v2_t?
+                
                 while true {
-                    let type = NDIlib_recv_capture_v2(recv, &v, &a, &m, 0) // Timeout 0 = Instant
+                    let type = NDIlib_recv_capture_v2(recv, &v, &a, &m, 0)
                     if type == NDIlib_frame_type_video {
-                        if var old = latestFrame { NDIlib_recv_free_video_v2(recv, &old) }
-                        latestFrame = v
+                        if var old = latestVideo { NDIlib_recv_free_video_v2(recv, &old) }
+                        latestVideo = v
                     } else if type == NDIlib_frame_type_audio {
-                        NDIlib_recv_free_audio_v2(recv, &a)
+                        // --- LECTURE AUDIO ---
+                        self?.playAudio(a)
+                        var mutA = a
+                        NDIlib_recv_free_audio_v2(recv, &mutA)
                     } else if type == NDIlib_frame_type_metadata {
                         NDIlib_recv_free_metadata(recv, &m)
                     } else {
@@ -118,9 +138,8 @@ class NDIView: NSObject, FlutterPlatformView {
                     }
                 }
                 
-                if let video = latestFrame {
+                if let video = latestVideo {
                     let now = CACurrentMediaTime()
-                    // Throttling à 30fps pour ne pas saturer le thread principal
                     if now - (self?.lastFrameTime ?? 0) >= (self?.frameInterval ?? 0) {
                         self?.lastFrameTime = now
                         self?.renderWithMetal(video)
@@ -128,21 +147,45 @@ class NDIView: NSObject, FlutterPlatformView {
                     var mutVideo = video
                     NDIlib_recv_free_video_v2(recv, &mutVideo)
                 } else {
-                    usleep(2000) // Un peu de repos CPU
+                    usleep(2000)
                 }
             }
         }
     }
 
-    // --- RENDU ACCÉLÉRÉ METAL (VIA CoreImage) ---
+    private func playAudio(_ frame: NDIlib_audio_frame_v2_t) {
+        let noSamples = Int(frame.no_samples)
+        let noChannels = Int(frame.no_channels)
+        
+        guard let data = frame.p_data, noSamples > 0, noChannels >= 1 else { return }
+        guard let player = playerNode, let format = audioFormat else { return }
+        
+        // On crée un buffer PCM compatible Apple
+        guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(noSamples)) else { return }
+        pcmBuffer.frameLength = AVAudioFrameCount(noSamples)
+        
+        // NDI est Planar Float32. pcmBuffer.floatChannelData est aussi UnsafePointer<UnsafeMutablePointer<Float>>
+        let channels = pcmBuffer.floatChannelData
+        let stride = Int(frame.channel_stride_in_bytes) / 4 // conversion offset bytes -> float samples
+        
+        for ch in 0..<min(noChannels, 2) {
+            let channelPointer = data.advanced(by: ch * stride)
+            let bufferPointer = channels?[ch]
+            if let dest = bufferPointer {
+                memcpy(dest, channelPointer, noSamples * 4)
+            }
+        }
+        
+        // On envoie le buffer au player
+        player.scheduleBuffer(pcmBuffer, at: nil, options: .interrupts)
+    }
+
     private func renderWithMetal(_ frame: NDIlib_video_frame_v2_t) {
         let width = Int(frame.xres)
         let height = Int(frame.yres)
         let stride = Int(frame.line_stride_in_bytes)
-        
         guard let p_data = frame.p_data else { return }
         
-        // Création d'une CIImage sans copie mémoire (directement depuis le pointeur)
         let ciImage = CIImage(
             bitmapData: Data(bytesNoCopy: p_data, count: stride * height, deallocator: .none),
             bytesPerRow: stride,
@@ -151,7 +194,6 @@ class NDIView: NSObject, FlutterPlatformView {
             colorSpace: CGColorSpaceCreateDeviceRGB()
         )
         
-        // Rendu GPU vers CGImage (Beaucoup plus rapide que CGContext CPU)
         if let cgImg = ciContext.createCGImage(ciImage, from: ciImage.extent) {
             let uiImage = UIImage(cgImage: cgImg)
             DispatchQueue.main.async { [weak self] in
@@ -162,6 +204,8 @@ class NDIView: NSObject, FlutterPlatformView {
 
     deinit {
         isRunning = false
+        playerNode?.stop()
+        audioEngine?.stop()
         if let recv = recvInstance { NDIlib_recv_destroy(recv) }
     }
 }
