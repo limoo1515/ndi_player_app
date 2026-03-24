@@ -1,4 +1,4 @@
-name: "MIMO_NDI iOS Cloud Build"
+name: "MIMO_NDI iOS Cloud Build (LFS)"
 
 on:
   push:
@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: macos-14
     steps:
-      - name: "Checkout Code"
+      - name: "Checkout Code (LFS)"
         uses: actions/checkout@v4
         with:
           lfs: true
@@ -20,40 +20,32 @@ jobs:
           flutter-version: '3.19.0'
           channel: 'stable'
 
-      - name: "Télécharger le SDK NDI depuis GitHub Release"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: "Recréer le binaire NDI (.a) à partir des morceaux"
         run: |
-          mkdir -p ios/NDISDK/lib
-          mkdir -p ios/NDISDK/include
-          
-          echo "Téléchargement de libndi_ios.zip..."
-          gh release download v1.0.0-sdk --repo ${{ github.repository }} --pattern 'libndi_ios.zip'
-          unzip -o libndi_ios.zip -d ios/NDISDK/lib/
-          ls -lh ios/NDISDK/lib/
-          
-          echo "Téléchargement des headers..."
-          gh release download v1.0.0-sdk --repo ${{ github.repository }} --pattern 'include.zip'
-          unzip -o include.zip -d ios/NDISDK/include/
+          echo "Reconstruction de libndi_ios.a..."
+          cd ios/NDISDK/lib
+          cat libndi_ios.a.part* > libndi_ios.a || echo "Pas de morceaux trouvés."
+          ls -lh libndi_ios.a
+          cd ../../..
 
+      - name: "Vérification des fichiers SDK NDI"
+        run: |
+          ls -lh ios/NDISDK/lib/
+          ls -lh ios/NDISDK/include/
+          [ -f ios/NDISDK/lib/libndi_ios.a ] && echo "✅ libndi_ios.a est PRÊT" || (echo "❌ libndi_ios.a MANQUANT" ; exit 1)
 
       - name: "Installer les dépendances Flutter"
         run: |
           flutter config --enable-ios
           flutter pub get
-          
-          # Générer le projet Xcode manquant (Runner.xcodeproj)
           flutter create --platforms=ios . || true
-          
-          # Tentative de génération d'icônes et splash (silencieux si ça échoue)
-          dart run flutter_launcher_icons:main || echo "Icon generation failed, using defaults"
-          dart run flutter_native_splash:create || echo "Splash generation failed, using defaults"
+          dart run flutter_launcher_icons:main || echo "Icon generation failed"
+          dart run flutter_native_splash:create || echo "Splash generation failed"
 
       - name: "Configurer Xcode pour NDI"
         run: |
           sudo gem install xcodeproj
           cd ios
-          # Ce script ajoute les frameworks et lie la libndi_ios.a au projet Runner
           ruby configure_xcode.rb
 
       - name: "Installation CocoaPods"
@@ -63,10 +55,7 @@ jobs:
 
       - name: "Générer l'IPA (Non signé)"
         run: |
-          # Construction du package iOS en mode Release
           flutter build ios --release --no-codesign --verbose
-          
-          # Préparation de l'archive IPA pour le téléchargement
           cd build/ios/iphoneos
           mkdir -p Payload
           cp -r Runner.app Payload/

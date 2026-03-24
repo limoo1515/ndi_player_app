@@ -1,5 +1,9 @@
 *.tmp
 *.7z
-*.a
 *.zip
-ios/NDISDK/lib/
+# On ignore le gros fichier .a combiné (qui fait 700Mo) 
+# mais on GARDE les petits fichiers .part* pour le Git LFS
+libndi_ios.a
+!*.part*
+ios/NDISDK/lib/README.md
+!ios/NDISDK/lib/*.part*
